@@ -1,31 +1,47 @@
-// Live ETSU GIS campus map — deployed from main.
-import { useEffect, useMemo, useRef, useState } from 'react';
-import L from 'leaflet';
+import { useMemo, useState } from 'react';
 
-const CAMPUS_CENTER = [36.3014, -82.3699];
-const CAMPUS_ZOOM = 16;
-const SOURCES = {
-  buildings: 'https://services5.arcgis.com/ZYK688A64hFRZ5yX/arcgis/rest/services/ETSU_Building_Footprints_(Editable)/FeatureServer/0/query',
-  roads: 'https://services5.arcgis.com/ZYK688A64hFRZ5yX/arcgis/rest/services/ETSU_Campus_Roads_2_19_2024_WFL1/FeatureServer/0/query',
-  sidewalks: 'https://services5.arcgis.com/ZYK688A64hFRZ5yX/arcgis/rest/services/ETSU_Sidewalks/FeatureServer/0/query',
-  parking: 'https://services5.arcgis.com/ZYK688A64hFRZ5yX/arcgis/rest/services/ETSU_parking_lots/FeatureServer/0/query',
-  trails: 'https://services5.arcgis.com/ZYK688A64hFRZ5yX/arcgis/rest/services/ETSU_Trails/FeatureServer/0/query',
-};
-const NAME_FIELDS = ['BUILDING_NAME','BLDG_NAME','BUILDING','NAME','FACILITY','DESCRIPTION','LOCATION'];
-const NUMBER_FIELDS = ['BUILDING_NUMBER','BLDG_NUMBER','BUILDING_NO','BLDG_NO','BLDG_NUM','NUMBER','BUILDINGID','BUILDING_ID'];
-const firstValue = (p, fields) => fields.map(f => p?.[f]).find(v => v !== undefined && v !== null && String(v).trim())?.toString().trim() || '';
-const normalizeBuilding = (feature, index) => ({ ...feature, properties: { ...(feature.properties || {}), __name: firstValue(feature.properties, NAME_FIELDS) || `ETSU Building ${index + 1}`, __number: firstValue(feature.properties, NUMBER_FIELDS) } });
-async function loadLayer(url) { const params = new URLSearchParams({ where:'1=1', outFields:'*', returnGeometry:'true', outSR:'4326', f:'geojson' }); const r = await fetch(`${url}?${params}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); const d = await r.json(); if (d.error) throw new Error(d.error.message); return d; }
-const fc = features => ({ type:'FeatureCollection', features });
+const PDF_MAP = 'https://www.etsu.edu/ehome/documents/etsu-campusmap.pdf#toolbar=0&navpanes=0&scrollbar=0&view=FitH';
+
+const buildings = [
+  { id: '92', name: 'D.P. Culp Student Center', category: 'Student Life', x: 34, y: 48 },
+  { id: '320', name: 'Sherrod Library', category: 'Academic', x: 55, y: 35 },
+  { id: '910', name: 'Martin Center for the Arts', category: 'Arts', x: 72, y: 55 },
+  { id: '904a', name: 'Niswonger Digital Media Center', category: 'Academic', x: 63, y: 42 },
+  { id: '201', name: 'Gilbreath Hall', category: 'Academic', x: 47, y: 43 },
+  { id: '202', name: 'Brown Hall', category: 'Academic', x: 43, y: 57 },
+];
 
 function App() {
-  const mapElement = useRef(null); const map = useRef(null); const buildingLayer = useRef(null);
-  const [layers,setLayers] = useState({buildings:[],roads:[],sidewalks:[],parking:[],trails:[]}); const [selected,setSelected] = useState(null); const [query,setQuery] = useState(''); const [loading,setLoading] = useState(true); const [message,setMessage] = useState('Loading official ETSU GIS data…');
-  useEffect(() => { if (!mapElement.current || map.current) return; map.current=L.map(mapElement.current,{zoomControl:true,preferCanvas:true}).setView(CAMPUS_CENTER,CAMPUS_ZOOM); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'&copy; OpenStreetMap contributors'}).addTo(map.current); return () => map.current?.remove(); },[]);
-  useEffect(() => { let cancelled=false; (async()=>{ setLoading(true); const entries=Object.entries(SOURCES); const results=await Promise.allSettled(entries.map(([,url])=>loadLayer(url))); if(cancelled)return; const next={buildings:[],roads:[],sidewalks:[],parking:[],trails:[]}; results.forEach((r,i)=>{if(r.status==='fulfilled'&&Array.isArray(r.value.features))next[entries[i][0]]=r.value.features;}); next.buildings=next.buildings.map(normalizeBuilding); setLayers(next); const loaded=Object.entries(next).filter(([,v])=>v.length).map(([k])=>k); setMessage(loaded.length?`Official ETSU GIS: ${loaded.join(' · ')}`:'ETSU GIS layers could not be loaded'); setLoading(false); })(); return()=>{cancelled=true}; },[]);
-  useEffect(() => { const m=map.current; if(!m||loading)return; const roads=L.geoJSON(fc(layers.roads),{style:{color:'#68747d',weight:4,opacity:.75}}).addTo(m); const sidewalks=L.geoJSON(fc(layers.sidewalks),{style:{color:'#c49a58',weight:2,opacity:.75,dashArray:'5 4'}}).addTo(m); const parking=L.geoJSON(fc(layers.parking),{style:{color:'#87939e',weight:1,fillColor:'#dce2e7',fillOpacity:.5}}).addTo(m); const trails=L.geoJSON(fc(layers.trails),{style:{color:'#4f875b',weight:3,opacity:.8,dashArray:'7 5'}}).addTo(m); buildingLayer.current=L.geoJSON(fc(layers.buildings),{style:f=>({color:selected?.properties?.OBJECTID===f?.properties?.OBJECTID?'#041e42':'#7c8792',weight:selected?.properties?.OBJECTID===f?.properties?.OBJECTID?3:1.5,fillColor:selected?.properties?.OBJECTID===f?.properties?.OBJECTID?'#f4c542':'#d8dee5',fillOpacity:.82}),onEachFeature:(f,l)=>{const p=f.properties||{};l.bindTooltip(`${p.__number?`${p.__number} · `:''}${p.__name}`,{sticky:true});l.on({click:()=>{setSelected(f);m.fitBounds(l.getBounds(),{padding:[70,70],maxZoom:18})},mouseover:()=>l.setStyle({weight:3,fillOpacity:.95}),mouseout:()=>buildingLayer.current?.resetStyle(l)});}}).addTo(m); return()=>{[roads,sidewalks,parking,trails,buildingLayer.current].forEach(l=>l&&m.removeLayer(l));buildingLayer.current=null}; },[layers,loading,selected]);
-  const results=useMemo(()=>{const q=query.trim().toLowerCase(); if(!q)return layers.buildings.slice(0,15); return layers.buildings.filter(f=>{const p=f.properties||{};return `${p.__name} ${p.__number} ${Object.values(p).join(' ')}`.toLowerCase().includes(q)}).slice(0,30)},[layers.buildings,query]);
-  const selectBuilding=f=>{setSelected(f);const target=f.properties?.OBJECTID;buildingLayer.current?.eachLayer(l=>{if(l.feature?.properties?.OBJECTID===target){map.current.fitBounds(l.getBounds(),{padding:[80,80],maxZoom:18});l.openTooltip()}})};
-  return <main className="app-shell"><header className="topbar"><div className="brand"><div className="brand-mark">ETSU</div><div><div className="brand-title">Campus Map</div><div className="brand-subtitle">East Tennessee State University</div></div></div><div className="search-wrap"><span className="search-icon">⌕</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search buildings, offices, rooms…" aria-label="Search campus" />{query&&<button className="clear-button" onClick={()=>setQuery('')} aria-label="Clear">×</button>}</div></header><section className="workspace"><aside className="search-panel"><span className="eyebrow">Official ETSU GIS</span><h1>Find your way around campus</h1><p className="intro">This map uses live ETSU GIS layers for campus features.</p><div className={`status ${loading?'loading':''}`}><span />{message}</div><div className="results-heading"><span>{query?'Matching buildings':'Campus buildings'}</span><span>{results.length}</span></div><div className="building-list">{results.map((f,i)=>{const p=f.properties||{};return <button className={`building-card ${selected?.properties?.OBJECTID===p.OBJECTID?'selected':''}`} key={p.OBJECTID??i} onClick={()=>selectBuilding(f)}><span className="building-number">{p.__number||'—'}</span><span className="building-copy"><strong>{p.__name}</strong><small>Official GIS footprint</small></span><span className="chevron">›</span></button>})}{!loading&&!results.length&&<div className="empty">No buildings found.</div>}</div></aside><section className="map-area" aria-label="Official ETSU campus map"><div ref={mapElement} className="map-container"/><div className="legend"><div><i className="building-key"/> Buildings</div><div><i className="road-key"/> Roads</div><div><i className="sidewalk-key"/> Sidewalks</div><div><i className="parking-key"/> Parking</div><div><i className="trail-key"/> Trails</div></div>{selected&&<article className="building-detail"><button className="detail-close" onClick={()=>setSelected(null)} aria-label="Close">×</button><span className="detail-number">{selected.properties?.__number?`BUILDING ${selected.properties.__number}`:'ETSU BUILDING'}</span><h2>{selected.properties?.__name}</h2><p>Actual ETSU GIS building footprint</p><button className="primary-action" onClick={()=>map.current.fitBounds(L.geoJSON(selected).getBounds(),{padding:[80,80],maxZoom:18})}>⌖ Locate building</button></article>}<div className="map-attribution">ETSU GIS data · OpenStreetMap basemap</div></section></section></main>;
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState(null);
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return buildings;
+    return buildings.filter((b) => `${b.id} ${b.name} ${b.category}`.toLowerCase().includes(q));
+  }, [query]);
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="brand"><div className="brand-mark">ETSU</div><div><div className="brand-title">Campus Map</div><div className="brand-subtitle">East Tennessee State University</div></div></div>
+        <div className="search-wrap"><span className="search-icon">⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search buildings, offices, rooms..." aria-label="Search campus" />{query && <button className="clear-button" onClick={() => setQuery('')} aria-label="Clear search">×</button>}</div>
+      </header>
+      <section className="workspace">
+        <aside className="search-panel">
+          <span className="eyebrow">Explore ETSU</span><h1>Find your way around campus</h1>
+          <p className="intro">Official ETSU campus map with interactive building information.</p>
+          <div className="map-source">Official ETSU campus map</div>
+          <div className="results-heading"><span>{query ? 'Search results' : 'Buildings'}</span><span>{results.length}</span></div>
+          <div className="building-list">{results.map((building) => <button key={building.id} className={`building-card ${selected?.id === building.id ? 'selected' : ''}`} onClick={() => setSelected(building)}><span className="building-number">{building.id}</span><span className="building-copy"><strong>{building.name}</strong><small>{building.category}</small></span><span className="chevron">›</span></button>)}{!results.length && <div className="empty">No campus locations found.</div>}</div>
+        </aside>
+        <section className="map-area" aria-label="Official ETSU campus map">
+          <iframe className="pdf-map" title="Official ETSU Campus Map" src={PDF_MAP} />
+          <div className="pdf-overlay">{buildings.map((building) => <button key={building.id} className={`building-hotspot ${selected?.id === building.id ? 'active' : ''}`} style={{ left: `${building.x}%`, top: `${building.y}%` }} onClick={() => setSelected(building)} aria-label={`Select ${building.name}`} title={building.name}><span>{building.id}</span></button>)}</div>
+          {selected && <article className="building-detail"><button className="detail-close" onClick={() => setSelected(null)} aria-label="Close">×</button><div className="detail-icon">{selected.id}</div><div className="detail-content"><span className="detail-number">BUILDING {selected.id}</span><h2>{selected.name}</h2><p>{selected.category} · ETSU Main Campus</p><div className="detail-actions"><button className="primary-action" onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selected.name + ', East Tennessee State University')}`, '_blank')}>↗ Get directions</button><button className="secondary-action" onClick={() => setSelected(null)}>Close</button></div></div></article>}
+          <div className="map-attribution">Official ETSU campus map</div>
+        </section>
+      </section>
+    </main>
+  );
 }
 export default App;
